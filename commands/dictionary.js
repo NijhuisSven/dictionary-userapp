@@ -16,7 +16,7 @@ module.exports = {
         let phonetic = '';
         let partOfSpeech = '';
         let definition = '';
-        
+
         try {
             const response = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
             const data = response.data;
@@ -24,71 +24,57 @@ module.exports = {
                 const entry = data[0];
                 fetchedWord = entry.word || word;
                 
-                // Get phonetic: try entry.phonetic then first available from entry.phonetics
+                // Get phonetic – using entry.phonetic or the first available phonetics.text
                 if (entry.phonetic) {
                     phonetic = entry.phonetic;
                 } else if (entry.phonetics && entry.phonetics.length > 0) {
                     phonetic = entry.phonetics.find(p => p.text)?.text || '';
                 }
-                
-                // Replace all forward slashes with vertical bars in the phonetic.
-                if (phonetic) {
-                    phonetic = phonetic.replace(/\//g, ' | ');
-                }
-                
-                // Prepare an array of definitions: use the first meaning for the first def,
-                // and if a second meaning exists, use its first def.
+                if (phonetic) phonetic = phonetic.replace(/\//g, ' | ');
+
+                // Prepare up to two definitions (from first and second meanings)
                 let definitions = [];
                 if (entry.meanings && entry.meanings.length > 0) {
-                    const meaningEntry0 = entry.meanings[0];
-                    partOfSpeech = meaningEntry0.partOfSpeech || '';
-                    if (meaningEntry0.definitions && meaningEntry0.definitions.length > 0) {
-                        definitions.push(meaningEntry0.definitions[0].definition || '');
+                    const firstMeaning = entry.meanings[0];
+                    partOfSpeech = firstMeaning.partOfSpeech || '';
+                    if (firstMeaning.definitions && firstMeaning.definitions.length > 0) {
+                        definitions.push(firstMeaning.definitions[0].definition || '');
                     }
                     if (entry.meanings.length > 1) {
-                        const meaningEntry1 = entry.meanings[1];
-                        if (meaningEntry1.definitions && meaningEntry1.definitions.length > 0) {
-                            definitions.push(`(${meaningEntry1.partOfSpeech || ''}) ${meaningEntry1.definitions[0].definition || ''}`);
+                        const secondMeaning = entry.meanings[1];
+                        if (secondMeaning.definitions && secondMeaning.definitions.length > 0) {
+                            definitions.push(`(${secondMeaning.partOfSpeech || ''}) ${secondMeaning.definitions[0].definition || ''}`);
                         }
                     }
                 }
-                
-                // Use 2 definitions if available; otherwise, only one.
-                const numDefs = definitions.length > 1 ? 2 : 1;
-                const definitionsToShow = definitions.slice(0, numDefs);
-                if (definitionsToShow.length > 1) {
-                    definition = definitionsToShow
-                        .map((def, index) => `${index + 1}. ${def}`)
-                        .join('\n');
-                } else if (definitionsToShow.length === 1) {
-                    definition = definitionsToShow[0];
-                }
+                // Use two definitions if available; otherwise, just one.
+                const definitionsToShow = definitions.slice(0, definitions.length > 1 ? 2 : 1);
+                definition = definitionsToShow.length > 1
+                    ? definitionsToShow.map((def, idx) => `${idx + 1}. ${def}`).join('\n')
+                    : definitionsToShow[0];
             }
         } catch (error) {
             return interaction.reply(`Sorry, I couldn't find **${word}** in the dictionary.`);
         }
         
-        // Fixed width
+        // Fixed image width and text settings
         const width = 600;
-        // Text settings
         const leftMargin = 20;
-        const wordY = 50; // y for the main word
-        const posY = wordY + 35; // y for part of speech
-        const defStartY = posY + 35; // y where definition starts
+        const wordY = 50;
+        const posY = wordY + 35;
+        const defStartY = posY + 35;
         const defFont = '16px Libre Baskerville, serif';
         const lineHeight = 22;
         const maxTextWidth = width - (leftMargin * 2);
         
-        // Create a temporary canvas for measuring definition text
+        // Create an off-screen canvas to measure text
         const tempCanvas = createCanvas(width, 100);
         const tempCtx = tempCanvas.getContext('2d');
         tempCtx.font = defFont;
         
-        // Split the definition into paragraphs (each bullet is on its own line)
+        // Split definition into paragraphs and then wrap each paragraph into lines
         const paragraphs = definition.split('\n');
         const defLines = [];
-        
-        // Process each paragraph separately
         for (let p = 0; p < paragraphs.length; p++) {
             const para = paragraphs[p].trim();
             if (!para) continue;
@@ -105,31 +91,28 @@ module.exports = {
                 }
             }
             if (line) defLines.push(line.trim());
-            // Add an extra blank line after each paragraph except the last one
             if (p < paragraphs.length - 1) {
                 defLines.push('');
             }
         }
         
-        // Calculate dynamic height: top section (defStartY) + definition lines + bottom margin (20)
+        // Calculate dynamic canvas height based on wrapped lines
         const finalHeight = defStartY + (defLines.length * lineHeight) + 20;
         
-        // Use a scale factor to improve clarity
+        // Create final canvas with scaling for clarity
         const scale = 2;
         const canvas = createCanvas(width * scale, finalHeight * scale);
         const ctx = canvas.getContext('2d');
         ctx.scale(scale, scale);
         
-        // Fill background with dark gray
+        // Draw background and main text elements
         ctx.fillStyle = '#1D1D1E';
         ctx.fillRect(0, 0, width, finalHeight);
         
-        // Draw the main word in large, bold, bright white Libre Baskerville font
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 40px Libre Baskerville, serif';
         ctx.fillText(fetchedWord, leftMargin, wordY);
         
-        // Draw phonetic next to the main word in color #999 if available
         if (phonetic) {
             const wordMetrics = ctx.measureText(fetchedWord);
             const phoneticX = leftMargin + wordMetrics.width + 10;
@@ -138,18 +121,16 @@ module.exports = {
             ctx.fillText(phonetic, phoneticX, wordY - 5);
         }
         
-        // Draw part of speech in slightly faded white
         ctx.font = '18px Libre Baskerville, serif';
         ctx.fillStyle = '#cccccc';
         if (partOfSpeech) {
             ctx.fillText(partOfSpeech, leftMargin, posY);
         }
         
-        // Draw definition text, left aligned
         ctx.font = defFont;
         ctx.fillStyle = '#ffffff';
         let currentY = defStartY;
-        defLines.forEach((line) => {
+        defLines.forEach(line => {
             ctx.fillText(line, leftMargin, currentY);
             currentY += lineHeight;
         });

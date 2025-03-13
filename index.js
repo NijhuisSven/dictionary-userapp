@@ -1,23 +1,22 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { 
-    Client, 
-    Collection, 
-    Events, 
-    GatewayIntentBits, 
-    REST, 
-    Routes 
+const {
+    Client,
+    Collection,
+    Events,
+    GatewayIntentBits,
+    REST,
+    Routes
 } = require('discord.js');
 const { token } = require('./config.json');
+const { get } = require('node:http');
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-// Create a collection to store commands
+// ===============================
+// Load Commands
+// ===============================
 client.commands = new Collection();
-
-// --------------------
-// Load Command Files
-// --------------------
 const commandsPath = path.join(__dirname, 'commands');
 const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
 
@@ -27,13 +26,13 @@ for (const file of commandFiles) {
     if ('data' in command && 'execute' in command) {
         client.commands.set(command.data.name, command);
     } else {
-        console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
+        console.warn(`WARNING: Command at ${filePath} is missing "data" or "execute".`);
     }
 }
 
-// ---------------------
-// Load Event Files
-// ---------------------
+// ===============================
+// Load Events
+// ===============================
 const eventsPath = path.join(__dirname, 'events');
 const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'));
 
@@ -47,50 +46,70 @@ for (const file of eventFiles) {
     }
 }
 
-// Create a REST instance for registering commands
+// ===============================
+// Register Commands via REST
+// ===============================
 const rest = new REST({ version: '10' }).setToken(token);
 
 client.once(Events.ClientReady, async readyClient => {
     console.log(`Ready! Logged in as ${readyClient.user.tag}`);
-
-    // Register global slash commands
+    
+    // Register global slash commands.
     try {
-        await readyClient.application.commands.set(client.commands.map(command => command.data.toJSON()));
-        console.log(`Successfully registered global application commands: ${client.commands.map(command => command.data.name).join(', ')}`);
+        const globalCommands = client.commands.map(command => command.data.toJSON());
+        await readyClient.application.commands.set(globalCommands);
+        console.log(`Global commands registered: ${client.commands.map(cmd => cmd.data.name).join(', ')}`);
     } catch (error) {
-        console.error('Error registering global application commands:', error);
+        console.error('Error registering global commands:', error);
     }
-
+    
     // Also register each command as a user-install command so they're available in DMs.
-    // integration_types: [0, 1] makes the command available for both guilds and DMs,
-    // contexts: [0, 1, 2] makes it available as a message, user or slash command.
+    // integration_types: [0, 1] makes it available for guilds and DMs.
+    // contexts: [0, 1, 2] makes it available in various command contexts.
     for (const command of client.commands.values()) {
-        const userCommandData = { 
-            ...command.data.toJSON(), 
-            integration_types: [0, 1], 
-            contexts: [0, 1, 2] 
+        const userCommandData = {
+            ...command.data.toJSON(),
+            integration_types: [0, 1],
+            contexts: [0, 1, 2]
         };
         try {
             await rest.post(Routes.applicationCommands(readyClient.user.id), { body: userCommandData });
-            console.log(`Successfully registered user-install command: ${command.data.name}`);
+            console.log(`User-install command registered: ${command.data.name}`);
         } catch (error) {
             console.error(`Error registering user-install command (${command.data.name}):`, error);
         }
     }
 });
 
-// Listen for interactions (slash commands and user commands)
+// ===============================
+// Blocked Users Handler
+// ===============================
+function getBlockedUsers() {
+    const data = fs.readFileSync("blockedUsers.json", "utf8");
+    return JSON.parse(data).blocked;
+}
+function isUserBlocked(userId) {
+    return getBlockedUsers().includes(userId);
+  }
+// ===============================
+// Interaction Handler
+// ===============================
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isChatInputCommand() && !interaction.isMessageContextMenuCommand()) return;
+
+    console.log(getBlockedUsers());
+    if (isUserBlocked(interaction.user.id)) {
+        return await interaction.reply({ content: 'You are blocked from using this bot. \n Please contact ``svenns.`` on discord for more information.', ephemeral: true });
+    }
     const command = interaction.client.commands.get(interaction.commandName);
     if (!command) {
-        console.error(`No command matching ${interaction.commandName} was found.`);
+        console.error(`Command not found: ${interaction.commandName}`);
         return;
     }
     try {
         await command.execute(interaction);
     } catch (error) {
-        console.error(error);
+        console.error(`Error executing command (${interaction.commandName}):`, error);
         await interaction.reply({ content: 'There was an error executing that command!', ephemeral: true });
     }
 });
